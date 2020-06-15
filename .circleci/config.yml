@@ -16,17 +16,70 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Install PHP MySQL
-          command: sudo docker-php-ext-install pdo_mysql
+          name: Install zlib1g
+          command: sudo apt install -y zlib1g-dev
+      - run:
+          name: Install PHP extensions
+          command: sudo docker-php-ext-install pdo_mysql zip
       - run:
           name: Wait for MySQL
           command: dockerize -wait tcp://127.0.0.1:3306 -timeout 120s
       - run:
-          name: Composer
+          name: Update Composer version
           command: sudo composer self-update
       - run:
-          name: Composer install
+          name: Install Composer packages
           command: composer install -n --prefer-dist
       - run:
           name: Run migrations
           command: php bin/console doctrine:migrations:migrate --env=test --no-interaction
+      - run:
+          name: Run tests
+          command: ./bin/phpunit
+  deploy:
+    working_directory: ~/micropost
+    docker:
+      - image: circleci/php:7.2.4-apache-stretch-node-browsers
+    steps:
+      - checkout
+      - run:
+          name: Install zlib1g
+          command: sudo apt install -y zlib1g-dev
+      - run:
+          name: Install PHP extensions
+          command: sudo docker-php-ext-install zip
+      - run:
+          name: Composer install
+          command: composer install -n --prefer-dist
+      - run:
+          name: Clear cache
+          command: php bin/console cache:clear --env=prod --no-interaction
+      - run:
+          name: Cache warmup
+          command: php bin/console cache:warmup --env=prod --no-interaction
+      - run:
+          name: Yarn
+          command: yarn install && yarn build
+      - run:
+          name: Add droplet
+          command: ssh-keyscan -H $DROPLET_IP >> ~/.ssh/known_hosts
+      - run:
+          name: Pre-deploy
+          command: ssh -T $DROPLET_USER@$DROPLET_IP < bin/deploy/pre_deploy.sh
+      - run:
+          name: Deploy code
+          command: rsync -vzcrSLhp --exclude '.env' --delete ~/micropost/ $DROPLET_USER@$DROPLET_IP:/var/www/micropost_current
+      - run:
+          name: Post-deploy
+          command: ssh -T $DROPLET_USER:$DROPLET_IP < bin/deploy/deploy.sh
+workflows:
+  version: 2
+  build-and-deploy:
+    jobs:
+      - build
+      - deploy:
+          requires:
+            - build
+          filters:
+            branches:
+              only: master
