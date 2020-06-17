@@ -1,85 +1,58 @@
+# PHP CircleCI 2.0 configuration file
+#
+# Check https://circleci.com/docs/2.0/language-php/ for more details
+#
 version: 2
 jobs:
   build:
-    working_directory: ~/micropost
     docker:
-      - image: circleci/php:7.2.4-apache-stretch-node-browsers
-        environment:
-          APP_ENV: test
-          DATABASE_URL: mysql://root:root@127.0.0.1/micro-post
-          MAILER_FROM: micro@micropost.com
-          MAILER_URL: null://localhost
-      - image: circleci/mysql:5.7
-        environment:
-          MYSQL_ROOT_PASSWORD: 'root'
-          MYSQL_DATABASE: micro-post
+      # Specify the version you desire here
+      - image: circleci/php:7.1-node-browsers
+
+      # Specify service dependencies here if necessary
+      # CircleCI maintains a library of pre-built images
+      # documented at https://circleci.com/docs/2.0/circleci-images/
+      # Using the RAM variation mitigates I/O contention
+      # for database intensive operations.
+      # - image: circleci/mysql:5.7-ram
+      #
+      # - image: redis:2.8.19
+
     steps:
       - checkout
-      - run:
-          name: Install zlib1g
-          command: sudo apt install -y zlib1g-dev
-      - run:
-          name: Install PHP extensions
-          command: sudo docker-php-ext-install pdo_mysql zip
-      - run:
-          name: Wait for MySQL
-          command: dockerize -wait tcp://127.0.0.1:3306 -timeout 120s
-      - run:
-          name: Update Composer version
-          command: sudo composer self-update
-      - run:
-          name: Install Composer packages
-          command: composer install -n --prefer-dist
-      - run:
-          name: Run migrations
-          command: php bin/console doctrine:migrations:migrate --env=test --no-interaction
-      - run:
-          name: Run tests
-          command: ./bin/phpunit
-  deploy:
-    working_directory: ~/micropost
-    docker:
-      - image: circleci/php:7.2.4-apache-stretch-node-browsers
-    steps:
-      - checkout
-      - run:
-          name: Install zlib1g
-          command: sudo apt install -y zlib1g-dev
-      - run:
-          name: Install PHP extensions
-          command: sudo docker-php-ext-install zip
-      - run:
-          name: Composer install
-          command: composer install -n --prefer-dist
-      - run:
-          name: Clear cache
-          command: php bin/console cache:clear --env=prod --no-interaction
-      - run:
-          name: Cache warmup
-          command: php bin/console cache:warmup --env=prod --no-interaction
-      - run:
-          name: Yarn
-          command: yarn install && yarn build
-      - run:
-          name: Add droplet
-          command: ssh-keyscan -H $DROPLET_IP >> ~/.ssh/known_hosts
-      - run:
-          name: Pre-deploy
-          command: ssh -T $DROPLET_USER@$DROPLET_IP < bin/deploy/pre_deploy.sh
-      - run:
-          name: Deploy code
-          command: rsync -vzcrSLhp --exclude '.env' --delete ~/micropost/ $DROPLET_USER@$DROPLET_IP:/var/www/micropost_current
-      - run:
-          name: Post-deploy
-          command: ssh -T $DROPLET_USER:$DROPLET_IP < bin/deploy/deploy.sh
-workflows:
-  version: 2
-  build-and-deploy:
-    jobs:
-      - build
-      - deploy:
-          requires:
-            - build
-          filters:
-            branches:
-              only: master
+
+      - run: sudo apt update # PHP CircleCI 2.0 Configuration File# PHP CircleCI 2.0 Configuration File sudo apt install zlib1g-dev libsqlite3-dev
+      - run: sudo docker-php-ext-install zip
+
+      # Download and cache dependencies
+      - restore_cache:
+          keys:
+            # "composer.lock" can be used if it is committed to the repo
+            - v1-dependencies-{{ checksum "composer.json" }}
+            # fallback to using the latest cache if no exact match is found
+            - v1-dependencies-
+
+      - run: composer install -n --prefer-dist
+
+      - save_cache:
+          key: v1-dependencies-{{ checksum "composer.json" }}
+          paths:
+            - ./vendor
+      - restore_cache:
+          keys:
+            - node-v1-{{ checksum "package.json" }}
+            - node-v1-
+      - run: yarn install
+      - save_cache:
+          key: node-v1-{{ checksum "package.json" }}
+          paths:
+            - node_modules
+
+      # prepare the database
+      - run: touch storage/testing.sqlite
+      - run: php artisan migrate --env=testing --database=sqlite_testing --force
+
+      # run tests with phpunit or codecept
+      #- run: ./vendor/bin/phpunit
+      - run: ./vendor/bin/codecept build
+      - run: ./vendor/bin/codecept run
